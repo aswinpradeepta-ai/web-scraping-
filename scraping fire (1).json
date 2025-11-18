@@ -1,0 +1,463 @@
+{
+  "name": "scraping fire",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -800,
+        -16
+      ],
+      "id": "8bee13a8-1c68-4b37-b92b-4b259d8aabde",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.firecrawl.dev/v2/extract",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer fc-749bea66d8c74f0682cdf52006215e2a"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"urls\": [\"https://www.shaivam.org/temples-of-lord-shiva/lord-shiva-temples-of-pattanamthitta-district/*\"],\n  \"prompt\": \"Extract a list of temples on this page. For each temple return: Name (temple name), Location (town/area only; do NOT include district/state), District (string if stated), Deities (comma-separated names if many), Main Deity (one name if clear), History (write 3–5 sentences strictly based on the page content; include builder, patron, period, and year if mentioned; avoid opinions; do not add facts not present on the page), Opening time (if present), Pincode (if present), Contact number (if present). Return an object with a 'results' array. If a field is unknown leave it empty — do not invent.\",\n  \"schema\": {\n    \"type\": \"object\",\n    \"properties\": {\n      \"results\": {\n        \"type\": \"array\",\n        \"items\": {\n          \"type\": \"object\",\n          \"properties\": {\n            \"Name\": { \"type\": \"string\" },\n            \"Location\": { \"type\": \"string\" },\n            \"District\": { \"type\": \"string\" },\n            \"Deities\": { \"type\": \"string\" },\n            \"Main Deity\": { \"type\": \"string\" },\n            \"History\": { \"type\": \"string\" },\n            \"Opening time\": { \"type\": \"string\" },\n            \"Pincode\": { \"type\": \"string\" },\n            \"Contact number\": { \"type\": \"string\" }\n          }\n        }\n      }\n    }\n  }\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -576,
+        -16
+      ],
+      "id": "5f914591-3473-4202-b657-90d030c1a5dd",
+      "name": "extract"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.firecrawl.dev/v2/extract/{{$node[\"extract\"].json[\"id\"]}}\n",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer fc-749bea66d8c74f0682cdf52006215e2a"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -352,
+        -16
+      ],
+      "id": "a492cf95-ec8b-4578-8f49-7b78d372d1ef",
+      "name": "obtained data"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ec6dc896-435c-46b7-aa70-577c8813d2b3",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "completed",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -128,
+        -112
+      ],
+      "id": "535c20d8-b0e1-4408-bc3a-1ce824368fd5",
+      "name": "If",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        96,
+        80
+      ],
+      "id": "f6e08615-bfcb-4d7a-b3d8-955e93a13e07",
+      "name": "Wait",
+      "webhookId": "1495e0b3-56a5-4d26-9f15-5080cfadc2c5"
+    },
+    {
+      "parameters": {
+        "jsCode": "// --- Normalize Firecrawl item(s) to your sheet columns ---\n// Output fields: Name, Location, District, Deities, Main Deity,\n// History, Opening time, Pincode, Contact number, Scraped_At, Key\n\nfunction first(...vals) {\n  for (const v of vals) {\n    const s = (v ?? \"\").toString().trim();\n    if (s) return s;\n  }\n  return \"\";\n}\n\nfunction get(obj, path, fallback = \"\") {\n  try { return path.split(\".\").reduce((o,k)=>(o?.[k]), obj) ?? fallback; }\n  catch { return fallback; }\n}\n\nfunction splitPlace(str) {\n  if (!str) return { loc: \"\", district: \"\" };\n  const p = String(str)\n    .replace(/\\s+/g, \" \")\n    .split(\",\")\n    .map(s => s.trim())\n    .filter(Boolean);\n\n  // Heuristic: last token might be state (kerala) - remove it\n  if (p.length > 1 && /kerala/i.test(p[p.length - 1])) p.pop();\n\n  let loc = \"\", district = \"\";\n  if (p.length === 1) {\n    loc = p[0];\n  } else if (p.length === 2) {\n    loc = p[0];\n    district = p[1];\n  } else if (p.length >= 3) {\n    loc = p[0];\n    district = p[1];\n  }\n  return { loc, district };\n}\n\nfunction norm(s) {\n  return (s || \"\")\n    .toString()\n    .normalize(\"NFKD\").replace(/[\\u0300-\\u036f]/g, \"\")\n    .toLowerCase()\n    .replace(/[^a-z0-9]+/g, \"-\")\n    .replace(/^-+|-+$/g, \"\")\n    .replace(/-+/g, \"-\");\n}\n\nfunction fromUrlSlug(url) {\n  if (!url) return \"\";\n  try {\n    const u = new URL(url);\n    const parts = u.pathname.split(\"/\").filter(Boolean);\n    return parts.length ? parts[parts.length-1].replace(/[-_]/g,\" \") : \"\";\n  } catch { return \"\"; }\n}\n\nfunction makeKey(name, district, pincode) {\n  const n = norm(name);\n  const d = norm(district);\n  const p = (pincode || \"\").toString().trim();\n  const base = [n, d].filter(Boolean).join(\"|\");\n  return p ? `${base}|${p}` : base;\n}\n\n// --- Expanded Deity normalization map ---\n// Add more regex entries as you discover new variants.\nconst DEITY_MAP = [\n  // Shiva group\n  { regex: /\\b(lord\\s*)?(shiva|shiv|mahadeva|mahadev|mahadevan|maha\\s*shiva|shankara|shankaran|bhole?nath|bholenath|shambhu|iswara|ishwara|ishwara)\\b/i, canonical: \"Shiva\" },\n\n  // Vishnu group (includes Perumal, Narayana, Venkateswara/Balaji variants)\n  { regex: /\\b(lord\\s*)?(vishnu|narayan|narayana|perumal|perumalappan|parthasarathy|venkateswara|venkatesh|balaji|tirupati|srivenkateswara)\\b/i, canonical: \"Vishnu\" },\n\n  // Krishna group\n  { regex: /\\b(lord\\s*)?(krishna|krishnan|govinda|gopala|gopal|radha-?krishna|radha krishna|shrinivasa)\\b/i, canonical: \"Krishna\" },\n\n  // Rama group\n  { regex: /\\b(lord\\s*)?(rama|ram|seetha ram|sri rama|ramachandra|ramachandran)\\b/i, canonical: \"Rama\" },\n\n  // Ganesha group\n  { regex: /\\b(ganesha|ganesh|vinayaka|vinayagar|vinayak|vigneshwara|pillaiyar|ganapathi|ganapathy)\\b/i, canonical: \"Ganesha\" },\n\n  // Durga / Parvati / Kali group\n  { regex: /\\b(durga|durga devi|devi|parvati|ambika|ambal|maha?lakshmi?ambal|kali|kalika|bhadrakali)\\b/i, canonical: \"Durga\" },\n\n  // Kali specific (map to Durga canonical above) - included in previous regex\n\n  // Lakshmi group\n  { regex: /\\b(lakshmi|laxmi|mahalakshmi|mahadevi|sree\\s*lakshmi|padma|bhagyalakshmi)\\b/i, canonical: \"Lakshmi\" },\n\n  // Saraswati group\n  { regex: /\\b(saraswati|saraswathi|saraswathy|sree\\s*saraswati)\\b/i, canonical: \"Saraswati\" },\n\n  // Hanuman group\n  { regex: /\\b(hanuman|hanumanth|hanumanta|anjaneya|anjaneyar|bajrang|bajrangbali|maruti)\\b/i, canonical: \"Hanuman\" },\n\n  // Ayyappa group\n  { regex: /\\b(ayyappa|ayyappan|sabarimala|sastha|sasta)\\b/i, canonical: \"Ayyappa\" },\n\n  // Murugan / Kartikeya / Subramanya group\n  { regex: /\\b(murugan|muruga|kartikeya|subramanya|subramanian|skanda|karthikeya|kumara)\\b/i, canonical: \"Murugan\" },\n\n  // Subramanya variants (included above)\n  // Add other common local names/misspellings as necessary\n\n  // Generic catch-all for \"Lord <Name>\" handled by matching <Name> in other regexes\n];\n\n// Normalize a single deity token to canonical name (if matched), else title-case cleaned token\nfunction normalizeDeityName(rawName) {\n  if (!rawName && rawName !== 0) return \"\";\n  const s = String(rawName).trim();\n  if (!s) return \"\";\n  // try mapping\n  for (const m of DEITY_MAP) {\n    if (m.regex.test(s)) return m.canonical;\n  }\n  // fallback: remove non-word chars and title case\n  const cleaned = s.replace(/[^\\w\\s]/g, \" \").replace(/\\s+/g, \" \").trim();\n  if (!cleaned) return \"\";\n  return cleaned.split(\" \").map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(\" \");\n}\n\n// parse deities: handles arrays, strings with separators, etc. and normalizes + dedupes\nfunction parseDeities(raw) {\n  if (!raw && raw !== 0) return { list: [], joined: \"\" };\n  // If it's an array, normalize each element\n  if (Array.isArray(raw)) {\n    const items = raw.map(String).map(s => s.trim()).filter(Boolean).map(normalizeDeityName);\n    const uniq = [...new Set(items.filter(Boolean))];\n    return { list: uniq, joined: uniq.join(\", \") };\n  }\n  // String path\n  let s = String(raw).trim();\n  s = s.replace(/^(deities?:\\s*)/i, \"\");\n  // split by common separators\n  const parts = s.split(/[,;|\\/•·]| and | & /i).map(p => p.trim()).filter(Boolean);\n  let tokens = parts;\n  if (parts.length === 1) {\n    const alt = parts[0].split(/ - |: /).map(p => p.trim()).filter(Boolean);\n    if (alt.length > 1) tokens = alt;\n  }\n  // normalize each token\n  const normalized = tokens.map(normalizeDeityName).filter(Boolean);\n  // dedupe preserving order\n  const uniq = [...new Set(normalized)];\n  return { list: uniq, joined: uniq.join(\", \") };\n}\n\nfunction extractPincode(raw) {\n  if (!raw && raw !== 0) return \"\";\n  const s = String(raw);\n  const m = s.match(/(\\d{6})/);\n  if (m) return m[1];\n  const digits = s.replace(/\\D+/g, \"\");\n  if (digits.length >= 6) return digits.slice(-6);\n  return \"\";\n}\n\nfunction normalizePhone(raw) {\n  if (!raw && raw !== 0) return \"\";\n  if (Array.isArray(raw)) {\n    return raw.map(x => normalizePhone(x)).filter(Boolean).join(\", \");\n  }\n  let s = String(raw).trim();\n  s = s.replace(/\\(0\\)/g, \"\").replace(/ext[:.]?\\s*\\d+/i, \"\");\n  const plus = s.trim().startsWith(\"+\") ? \"+\" : \"\";\n  const digits = s.replace(/\\D+/g, \"\");\n  if (!digits) return \"\";\n  if (digits.length === 10) return plus + digits;\n  if (digits.length === 12 && digits.startsWith(\"91\")) return \"+\" + digits;\n  if (digits.length > 12) return plus + digits;\n  return plus + digits;\n}\n\nfunction tidyText(s) {\n  if (!s && s !== 0) return \"\";\n  return String(s).replace(/\\s+/g, \" \").trim();\n}\n\nfunction rowFrom(record, urlFromRecord, rootUrl) {\n  const url = first(urlFromRecord, record?.url, rootUrl) || \"\";\n\n  const name = tidyText(first(\n    record[\"Name\"], record.name, record.title, record.heading, record.h1,\n    get(record, \"metadata.title\"), fromUrlSlug(url)\n  ));\n\n  const locationText = first(\n    record[\"Location\"], record.location, record.address, record.place,\n    get(record, \"address.full\"), get(record, \"address.text\")\n  );\n\n  const explicitDistrict = first(\n    record[\"District\"], record.district, get(record, \"address.district\"),\n    get(record, \"address.city\"), get(record, \"address.county\")\n  );\n\n  const split = splitPlace(locationText);\n  const loc = tidyText(first(split.loc, get(record, \"address.locality\"), locationText));\n  const district = tidyText(first(explicitDistrict, split.district));\n\n  // parse & normalize deities\n  const rawDeities = first(record[\"Deities\"], record.deities, record.deity, get(record, \"attributes.deity\"), get(record, \"info.deities\"));\n  const deitiesParsed = parseDeities(rawDeities);\n  const deities = deitiesParsed.joined || \"\";\n\n  // mainDeity: prefer explicit fields, else first parsed deity (already normalized)\n  const explicitMain = first(record[\"Main Deity\"], record.main_deity, record.mainDeity, record.deity);\n  const mainDeity = tidyText(normalizeDeityName(explicitMain || (deitiesParsed.list.length ? deitiesParsed.list[0] : \"\")));\n\n  const history = tidyText(first(\n    record[\"History\"], record.history, record.description, get(record,\"metadata.description\")\n  ));\n\n  const openingTime = tidyText(first(\n    record[\"Opening time\"], record[\"Opening Time\"], record.timings, record.opening_time, record.openingTime, get(record,\"hours.text\")\n  ));\n\n  const pincodeCandidate = first(record[\"Pincode\"], record.pincode, get(record,\"address.pincode\"), get(record,\"address.postcode\"), locationText, history);\n  const pincode = extractPincode(pincodeCandidate);\n\n  const phoneCandidate = first(record[\"Contact number\"], record.contact_number, record.phone, record.mobile, get(record,\"contact.phone\"), get(record,\"contact.telephone\"));\n  const phone = normalizePhone(phoneCandidate);\n\n  const key = makeKey(name || fromUrlSlug(url), district, pincode);\n\n  // Scraped_At should be equal to the source URL (per request)\n  const scrapedAt = url || \"\";\n\n  return {\n    Name: name,\n    Location: loc,\n    District: district,\n    Deities: deities,\n    \"Main Deity\": mainDeity,\n    History: history,\n    \"Opening time\": openingTime,\n    Pincode: pincode,\n    \"Contact number\": phone,\n    Scraped_At: scrapedAt,\n    Source_URL: url,\n    Key: key,\n  };\n}\n\n// -------- collect rows from possible shapes --------\nconst out = [];\nfor (const item of $input.all()) {\n  const j = item.json;\n  const rootUrl = first(j.url, get(j,\"data.url\"), get(j,\"metadata.url\"));\n\n  const candidateArrays = [\n    get(j,\"data.results\"),\n    get(j,\"results\"),\n    get(j,\"output.results\"),\n    get(j,\"response.results\"),\n    get(j,\"items\"),\n    get(j,\"data.items\"),\n    get(j,\"data.results.items\")\n  ].filter(a => Array.isArray(a));\n\n  const merged = candidateArrays.length ? candidateArrays.flat() : null;\n\n  if (merged && merged.length) {\n    for (const r of merged) {\n      const rec = (r && typeof r === \"object\" && (\"data\" in r)) ? (r.data ?? r) : (r ?? {});\n      out.push({ json: rowFrom(rec, r?.url ?? r?.source ?? undefined, rootUrl) });\n    }\n  } else {\n    const rec = (j?.data && typeof j.data === \"object\" && !Array.isArray(j.data)) ? j.data : j;\n    out.push({ json: rowFrom(rec, j?.url, rootUrl) });\n  }\n}\n\nif (out.length) {\n  out[out.length - 1].json.__items_emitted = out.length;\n}\nreturn out;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        96,
+        -144
+      ],
+      "id": "4818aeec-d20d-4da9-9ec2-aa5704e05539",
+      "name": "Normalize"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1D-quZhY8SUMewoLud9bTWD4erYxBP99vtCmbrI-cy7E",
+          "mode": "list",
+          "cachedResultName": "ScrapedTemples in kannur and kasargod.",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1D-quZhY8SUMewoLud9bTWD4erYxBP99vtCmbrI-cy7E/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1D-quZhY8SUMewoLud9bTWD4erYxBP99vtCmbrI-cy7E/edit#gid=0"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "Key",
+              "lookupValue": "={{ $json[\"Key\"].toString().trim() }}"
+            }
+          ]
+        },
+        "options": {
+          "returnFirstMatch": true
+        }
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        320,
+        -80
+      ],
+      "id": "d174033f-243f-4e3b-8b4c-218016df05f0",
+      "name": "Get row(s) in sheet",
+      "retryOnFail": false,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "rttb0P7UhrsMLmoD",
+          "name": "Google Sheets account 2"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "/****************************\n * Merge node - fixed: unionSources defined + robust pickPreferred\n ****************************/\n\n/* ---------- helpers ---------- */\nfunction isEmptyVal(v){\n  return v === undefined || v === null || (typeof v === \"string\" && v.trim() === \"\");\n}\nfunction pickPreferred(...vals){\n  for (const v of vals) {\n    if (v === undefined || v === null) continue;\n    // if string, trim and check non-empty\n    if (typeof v === \"string\") {\n      const s = v.trim();\n      if (s !== \"\") return s;\n      continue;\n    }\n    // arrays and objects\n    if (Array.isArray(v) && v.length) return v;\n    if (typeof v === \"object\") {\n      // non-empty object: return as-is\n      try {\n        if (Object.keys(v).length) return v;\n      } catch (e) { return v; }\n    }\n    if (v !== \"\") return v;\n  }\n  return \"\";\n}\nfunction first(...vals) {\n  for (const v of vals) {\n    if (v !== undefined && v !== null) {\n      const s = String(v).trim();\n      if (s) return s;\n    }\n  }\n  return \"\";\n}\nfunction canonText(s){\n  return (s||\"\").toString()\n    .normalize(\"NFKD\").replace(/[\\u0300-\\u036f]/g,\"\")\n    .toLowerCase().replace(/[^a-z0-9]+/g,\" \").trim();\n}\nfunction normKeyPart(s){\n  return canonText(s||\"\").replace(/\\s+/g,\"-\").replace(/^-+|-+$/g,\"\");\n}\nfunction makeKeyFromNameDistrict(name, district){\n  const n = normKeyPart(name||\"\");\n  const d = normKeyPart(district||\"\");\n  return [n,d].filter(Boolean).join(\"|\");\n}\nfunction titleCase(s){\n  return (s||\"\").toString().split(/\\s+/).map(w=>w? w[0].toUpperCase()+w.slice(1) : \"\").join(\" \");\n}\n\n/* ---------- small domain helpers ---------- */\nfunction betterNumberish(n,o){\n  n=(n||\"\").toString().trim(); o=(o||\"\").toString().trim();\n  if(!o && n) return n; if(!n && o) return o; if(!n && !o) return \"\";\n  const nDigits = n.replace(/\\D+/g,\"\"), oDigits = o.replace(/\\D+/g,\"\");\n  if (nDigits.length !== oDigits.length) return (nDigits.length > oDigits.length) ? n : o;\n  return (n.length >= o.length) ? n : o;\n}\nfunction pincodeNormalizeRaw(s){\n  if(!s && s!==0) return \"\";\n  const digits = (\"\"+s).replace(/\\D+/g,\"\");\n  if (!digits) return \"\";\n  return digits.length >= 6 ? digits.slice(-6) : digits;\n}\nfunction unionSources(a,b){\n  const split = txt => (txt||\"\").toString().split(/[\\|,;]\\s*/).map(s=>s.trim()).filter(Boolean);\n  const A = split(a), B = split(b);\n  const united = [...new Set([...A,...B])].filter(Boolean);\n  return united.join(\" | \");\n}\n\n/* ---------- Deity parsing/merge (lightweight) ---------- */\nfunction parseDeities(val){\n  const raw=(val||\"\").toString();\n  const parts=raw.split(/[,/&;]|(?:\\band\\b)/gi).map(s=>s.trim()).filter(Boolean);\n  const set=new Set();\n  for (const p of parts){\n    const t = (p||\"\").toString().trim().split(/\\s+/).filter(Boolean).filter(w => ![\"lord\",\"sri\",\"sree\",\"devi\",\"temple\"].includes(w)).join(\" \");\n    if (!t) continue;\n    set.add(titleCase(t));\n  }\n  return [...set];\n}\nfunction mergeDeities(newVal, oldVal){\n  const a=new Set(parseDeities(oldVal));\n  for (const x of parseDeities(newVal)) a.add(x);\n  return [...a].sort().join(\", \");\n}\nfunction canonicalizeDeity(tok){\n  const t = (tok||\"\").toString().trim();\n  return t ? titleCase(t) : \"\";\n}\nfunction mergeMainDeity(newVal, oldVal){\n  const existing=(oldVal||\"\").toString().trim();\n  if (existing) return canonicalizeDeity(existing);\n  const list=parseDeities(newVal);\n  return list.length? canonicalizeDeity(list[0]) : \"\";\n}\n\n/* ---------- gather inputs robustly ---------- */\nconst allInputs = $input.all() || [];\nlet leftItems = allInputs.filter(x => x.$inputIndex === 0).map(x => x.json || {});\nlet rightRows = allInputs.filter(x => x.$inputIndex === 1).map(x => x.json || {});\n\n// Single-connection case: treat all items as left\nif (leftItems.length === 0 && allInputs.length > 0) {\n  leftItems = allInputs.map(x => x.json || {});\n  rightRows = [];\n}\n\n/* ---------- ensure Keys present ---------- */\nfor (const it of leftItems) if (it && !it.Key) it.Key = makeKeyFromNameDistrict(it.Name || it.name, it.District || it.district);\nfor (const it of rightRows) if (it && !it.Key) it.Key = makeKeyFromNameDistrict(it.Name || it.name, it.District || it.district);\n\n/* ---------- index right rows by Key (prefer richer row) ---------- */\nconst rightByKey = {};\nfor (const r of rightRows) {\n  if (!r || !r.Key) continue;\n  const k = String(r.Key);\n  if (!rightByKey[k] || (Object.keys(r).length > Object.keys(rightByKey[k]).length)) rightByKey[k] = r;\n}\n\n/* ---------- merge main loop ---------- */\nconst out = [];\nconst matchedRightKeys = new Set();\n\nfor (const left of leftItems) {\n  const leftName = first(left.Name, left.name);\n  const leftDistrict = first(left.District, left.district);\n  const leftKey = left.Key || makeKeyFromNameDistrict(leftName, leftDistrict);\n\n  // find right by key\n  let right = (leftKey && rightByKey[leftKey]) ? rightByKey[leftKey] : null;\n  let matchMethod = right ? \"key\" : \"\";\n\n  if (right && right.Key) matchedRightKeys.add(String(right.Key));\n\n  // choose first non-empty (right preferred, fallback to left)\n  const nameVal = pickPreferred(right?.Name, right?.name, left?.Name, left?.name) || \"\";\n  const locationVal = pickPreferred(right?.Location, right?.location, left?.Location, left?.location) || \"\";\n  const districtVal = pickPreferred(right?.District, right?.district, left?.District, left?.district) || \"\";\n\n  // main deity: prefer right, then left, then derive from Deities\n  let mainDeity = pickPreferred(right?.[\"Main Deity\"], right?.[\"Main_Deity\"], right?.main_deity,\n                                left?.[\"Main Deity\"], left?.[\"Main_Deity\"], left?.main_deity);\n  if (!mainDeity) {\n    const dlist = parseDeities(pickPreferred(left?.Deities, right?.Deities, left?.deities, right?.deities));\n    if (dlist && dlist.length) mainDeity = dlist[0];\n  }\n  mainDeity = mainDeity ? canonicalizeDeity(mainDeity) : \"\";\n\n  const merged = {\n    Key: pickPreferred(leftKey, left.Key, right?.Key, \"\"),\n\n    Name: nameVal,\n    Location: locationVal,\n    District: districtVal,\n\n    Deities: mergeDeities(left?.Deities, right?.Deities),\n    \"Main Deity\": mainDeity,\n    Main_Deity: mainDeity,\n\n    History: pickPreferred(left?.History, right?.History, left?.history, right?.history) || \"\",\n\n    \"Opening time\": pickPreferred(left?.[\"Opening time\"], right?.[\"Opening time\"], left?.opening_time, right?.opening_time) || \"\",\n    Pincode: pincodeNormalizeRaw(betterNumberish(left?.Pincode, right?.Pincode)),\n    \"Contact number\": betterNumberish(left?.[\"Contact number\"], right?.[\"Contact number\"]),\n\n    Scraped_At: pickPreferred(unionSources(left?.Scraped_At, right?.Scraped_At), left?.Scraped_At, right?.Scraped_At) || \"\",\n    Source_URL: pickPreferred(unionSources(left?.Source_URL, right?.Source_URL), left?.Source_URL, right?.Source_URL) || \"\",\n\n    // debug\n    __merge_match_method: matchMethod || \"no-match\",\n    __merge_note: right ? \"merged with existing\" : \"new (no match)\",\n    __debug_left_sample: (() => {\n      try {\n        const s = JSON.stringify(left);\n        return s.length > 800 ? s.slice(0,800) + \"…(truncated)\" : s;\n      } catch(e){ return String(left); }\n    })(),\n    __debug_right_sample: (() => {\n      try {\n        const s = JSON.stringify(right || {});\n        return s.length > 800 ? s.slice(0,800) + \"…(truncated)\" : s;\n      } catch(e){ return String(right); }\n    })()\n  };\n\n  out.push({ json: merged });\n}\n\n/* optional: include unmatched right-only rows */\n// for (const r of rightRows) {\n//   if (!r || !r.Key) continue;\n//   if (matchedRightKeys.has(r.Key)) continue;\n//   out.push({ json: r });\n// }\n\nif (out.length) out[out.length - 1].json.__items_emitted = out.length;\nreturn out;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        544,
+        -144
+      ],
+      "id": "ee0b26d8-384f-49a1-ba31-9d429ee5792e",
+      "name": "merge"
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1D-quZhY8SUMewoLud9bTWD4erYxBP99vtCmbrI-cy7E",
+          "mode": "list",
+          "cachedResultName": "ScrapedTemples in kannur and kasargod.",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1D-quZhY8SUMewoLud9bTWD4erYxBP99vtCmbrI-cy7E/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1D-quZhY8SUMewoLud9bTWD4erYxBP99vtCmbrI-cy7E/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Key": "={{ $json.Key }}",
+            "Name": "={{ $json.Name }}",
+            " Location": "={{ $json.Location }}",
+            "District": "={{ $json.District }}",
+            "Deities": "={{ $json.Deities }}",
+            "Main Deity ": "={{ $json['Main Deity'] }}",
+            "History": "={{ $json.History }}",
+            "Opening time": "={{ $json['Opening time'] }}",
+            "Pincode": "={{ $json.Pincode }}",
+            " Contact number": "={{ $json['Contact number'] }}",
+            "Scraped_At": "={{ $json.Scraped_At }}"
+          },
+          "matchingColumns": [
+            "Key"
+          ],
+          "schema": [
+            {
+              "id": "Name",
+              "displayName": "Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": " Location",
+              "displayName": " Location",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "District",
+              "displayName": "District",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Deities",
+              "displayName": "Deities",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Main Deity ",
+              "displayName": "Main Deity ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "History",
+              "displayName": "History",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Opening time",
+              "displayName": "Opening time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Pincode",
+              "displayName": "Pincode",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": " Contact number",
+              "displayName": " Contact number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Scraped_At",
+              "displayName": "Scraped_At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Key",
+              "displayName": "Key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        768,
+        -144
+      ],
+      "id": "e26639f5-98be-497c-9bcc-664e36e3e5b5",
+      "name": "Append or update row in sheet",
+      "alwaysOutputData": false,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "rttb0P7UhrsMLmoD",
+          "name": "Google Sheets account 2"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "extract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "extract": {
+      "main": [
+        [
+          {
+            "node": "obtained data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "obtained data": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "obtained data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize": {
+      "main": [
+        [
+          {
+            "node": "Get row(s) in sheet",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet": {
+      "main": [
+        [
+          {
+            "node": "merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "merge": {
+      "main": [
+        [
+          {
+            "node": "Append or update row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "70cb6ca0-4eae-4e09-af00-5e02de526a05",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "2bb6485c0f00620fac2efd94cb020ba620587a687b4ec5b4af4006cd5889361d"
+  },
+  "id": "F8zaoTrx6C4lTEXx",
+  "tags": []
+}
